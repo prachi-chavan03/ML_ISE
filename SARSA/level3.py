@@ -4,13 +4,14 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import time
 
-# ----- GridWorld Environment -----
+# ----- GridWorld Environment with Increased Complexity ----- 
 class GridWorld:
     def __init__(self, size=10, obstacles=None):
         self.size = size
-        self.start = (0, 0)
-        self.goal = (9, 9)
-
+        self.start = (0, 0)    # Fixed start position
+        self.goal = (9, 9)     # Fixed goal position
+        
+        # Ensure obstacles don't block start/goal
         self.obstacles = obstacles if obstacles else []
         while len(self.obstacles) < 20:
             obs = (random.randint(0, size-1), random.randint(0, size-1))
@@ -47,108 +48,146 @@ class GridWorld:
         self.state = new_state
         return new_state, reward, self.is_done()
 
-# ----- Hyperparameter Grid Search -----
-alpha_values = [0.1, 0.3, 0.5]
-gamma_values = [0.8, 0.9, 0.99]
-epsilon_values = [0.1, 0.2, 0.3]
+# ----- Setup for Level 3 SARSA ----- 
+size = 10
+episodes = 500
+alpha = 0.4  # Higher learning rate
+gamma = 0.98  # Future reward consideration
+epsilon = 0.002  # Exploration rate
 
-best_reward = float('-inf')
-best_config = None
-best_q_table = None
-best_steps = None
-best_rewards = None
+reward_for_goal = 30  # Increased reward for goal
+penalty_for_obstacles = -3  # Reduced penalty for obstacles
 
-# Reduce the number of episodes to speed up testing
-episodes = 10  # Adjust for testing
+q_table = np.zeros((size, size, len(['up', 'down', 'left', 'right'])))
+action_map = {a: i for i, a in enumerate(['up', 'down', 'left', 'right'])}
+index_map = {i: a for a, i in action_map.items()}
 
-for alpha in alpha_values:
-    for gamma in gamma_values:
-        for epsilon in epsilon_values:
-            print(f"Testing config - Alpha: {alpha}, Gamma: {gamma}, Epsilon: {epsilon}")  # Debugging line
-            env = GridWorld(size=10)
-            q_table = np.zeros((10, 10, 4))
-            action_map = {a: i for i, a in enumerate(['up', 'down', 'left', 'right'])}
-            index_map = {i: a for a, i in action_map.items()}
+rewards_per_episode = []
+steps_per_episode = []
+successes = 0
+start_time = time.time()
 
-            total_rewards = []
-            steps_per_episode = []
-            successes = 0
+env = GridWorld(size=size)
 
-            for ep in range(episodes):
-                state = env.reset()
-                row, col = state
-                if random.random() < epsilon:
-                    action = random.choice(env.actions)
-                else:
-                    action_index = np.argmax(q_table[row, col])
-                    action = index_map[action_index]
+# ----- SARSA Training Loop ----- 
+for ep in range(episodes):
+    state = env.reset()
+    total_reward = 0
+    done = False
+    steps = 0
 
-                total_reward = 0
-                done = False
-                steps = 0
+    # Initial action choice
+    if random.random() < epsilon:
+        action = random.choice(env.actions)
+    else:
+        action_index = np.argmax(q_table[state[0], state[1]])
+        action = index_map[action_index]
 
-                while not done:
-                    steps += 1
-                    action_idx = action_map[action]
-                    next_state, reward, done = env.step(action)
-                    n_row, n_col = next_state
+    while not done:
+        steps += 1
+        row, col = state
 
-                    if random.random() < epsilon:
-                        next_action = random.choice(env.actions)
-                    else:
-                        next_action_index = np.argmax(q_table[n_row, n_col])
-                        next_action = index_map[next_action_index]
+        next_state, reward, done = env.step(action)
 
-                    next_action_idx = action_map[next_action]
+        # Next action choice (SARSA updates using the selected action in the next state)
+        if random.random() < epsilon:
+            next_action = random.choice(env.actions)
+        else:
+            next_action_index = np.argmax(q_table[next_state[0], next_state[1]])
+            next_action = index_map[next_action_index]
 
-                    q_table[row, col, action_idx] += alpha * (
-                        reward + gamma * q_table[n_row, n_col, next_action_idx] - q_table[row, col, action_idx]
-                    )
+        action_index = action_map[action]
+        next_action_index = action_map[next_action]
 
-                    total_reward += reward
-                    row, col = n_row, n_col
-                    action = next_action
+        # SARSA update rule
+        q_table[row, col, action_index] += alpha * (
+            reward + gamma * q_table[next_state[0], next_state[1], next_action_index] - q_table[row, col, action_index]
+        )
 
-                total_rewards.append(total_reward)
-                steps_per_episode.append(steps)
-                if env.is_done():
-                    successes += 1
+        total_reward += reward
+        state = next_state
+        action = next_action  # Move to the next action
 
-            avg_reward = np.mean(total_rewards)
-            if avg_reward > best_reward:
-                best_reward = avg_reward
-                best_config = (alpha, gamma, epsilon)
-                best_q_table = q_table.copy()
-                best_steps = steps_per_episode[:]
-                best_rewards = total_rewards[:]
+    rewards_per_episode.append(total_reward)
+    steps_per_episode.append(steps)
+    if env.is_done():
+        successes += 1
 
-# ----- Results -----
-alpha, gamma, epsilon = best_config
-print(f"\n✅ Best Hyperparameters - Alpha: {alpha}, Gamma: {gamma}, Epsilon: {epsilon}")
-print(f"📈 Best Avg Reward: {best_reward:.2f}")
-print(f"✅ Best Success Rate: {(np.sum(np.array(best_rewards) > 0) / len(best_rewards)) * 100:.2f}%")
-print(f"📉 Best Avg Steps: {np.mean(best_steps):.2f}")
+end_time = time.time()
+training_time = end_time - start_time
+success_rate = successes / episodes * 100
 
-# ----- Visualizations -----
-plt.figure(figsize=(10, 5))
-plt.plot(best_rewards)
-plt.title("SARSA (Tuned): Reward per Episode")
-plt.xlabel("Episode")
-plt.ylabel("Total Reward")
-plt.grid(True)
-plt.show()
-
-plt.figure(figsize=(10, 5))
-plt.plot(best_steps, color='orange')
-plt.title("SARSA (Tuned): Steps per Episode")
-plt.xlabel("Episode")
-plt.ylabel("Steps")
-plt.grid(True)
-plt.show()
-
+# ----- Visualizations ----- 
 plt.figure(figsize=(8, 6))
-sns.heatmap(np.max(best_q_table, axis=2), annot=True, cmap="coolwarm", fmt=".2f")
-plt.title("SARSA Q-Table Heatmap (Max Q-Values)")
+sns.heatmap(np.max(q_table, axis=2), annot=True, cmap="coolwarm", cbar=True, fmt=".2f")
+plt.title("SARSA Q-Table Heatmap (Max Q-Values) - Level 3")
 plt.xlabel("Columns")
 plt.ylabel("Rows")
 plt.show()
+
+plt.figure(figsize=(10, 5))
+plt.plot(rewards_per_episode)
+plt.xlabel("Episodes")
+plt.ylabel("Total Reward")
+plt.title("SARSA: Total Reward per Episode (Level 3)")
+plt.grid(True)
+plt.show()
+
+plt.figure(figsize=(10, 5))
+plt.plot(steps_per_episode, color='orange')
+plt.xlabel("Episodes")
+plt.ylabel("Steps Taken")
+plt.title("SARSA: Steps per Episode (Level 3)")
+plt.grid(True)
+plt.show()
+
+
+avg_steps = np.mean(steps_per_episode)
+avg_reward = np.mean(rewards_per_episode)
+
+print(f"✅ Success Rate: {success_rate:.2f}%")
+print(f"⏱️ Training Time: {training_time:.2f} seconds")
+print(f"📏 Avg Steps per Episode: {avg_steps:.2f}")
+print(f"💰 Avg Reward per Episode: {avg_reward:.2f}")
+
+
+# ----- Robot Path Visualization ----- 
+def visualize_robot_path(delay=0.5):
+    state = env.reset()
+    path = [state]
+
+    fig, ax = plt.subplots()
+
+    for _ in range(50):  # Max 50 steps
+        grid = np.zeros((env.size, env.size))
+
+        for pos in path:
+            grid[pos] = 0.5
+        for obs in env.obstacles:
+            grid[obs] = -1
+        grid[env.goal] = 2
+        grid[state] = 1
+
+        ax.clear()
+        ax.imshow(grid, cmap='coolwarm', interpolation='nearest')
+
+        for x in range(env.size):
+            ax.axhline(x - 0.5, color='black', linewidth=0.5)
+            ax.axvline(x - 0.5, color='black', linewidth=0.5)
+
+        plt.title("🤖 Robot Path Visualization")
+        plt.pause(delay)
+
+        if env.is_done():
+            break
+
+        row, col = state
+        best_action_index = np.argmax(q_table[row, col])
+        action = index_map[best_action_index]
+        next_state, _, _ = env.step(action)
+        state = next_state
+        path.append(state)
+
+    plt.show()
+
+visualize_robot_path()
